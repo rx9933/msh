@@ -1,0 +1,55 @@
+{
+  "sample_count": 1000,
+  "model_dir": "../../../downloads/model",
+  "model_glob": "model*.npy",
+  "output_dir": "../generated_data",
+  "seed": 20260930,
+  "velocity_scale": 0.0001,
+  "velocity_channel": 0,
+  "noise_relative_std": 0.01,
+  "noise_floor": 1e-6,
+  "prior_mean_smoothing": {
+    "num_steps": 20,
+    "dt": 0.01,
+    "kappa": 0.05
+  },
+  "model_settings": {
+    "nx": 64,
+    "ny": 64,
+    "source_frequencies": [[1000], [1000], [1000], [1000]],
+    "use_tv_regularization": false,
+    "verbose": false
+  },
+  "outputs": {
+    "parameter": true,
+    "prior_mean_parameter": true,
+    "map_initial_parameter": true,
+    "velocity_field": true,
+    "state": true,
+    "clean_data": true,
+    "noisy_data": true,
+    "forward_jacobian": true,
+    "data_sensitivity": true,
+    "fisher_diagonal": true,
+    "map_point": true,
+    "map_sensitivity": true
+  },
+  "map_solver": {
+    "initial_guess": "prior_mean",
+    "rel_tolerance": 1e-6,
+    "abs_tolerance": 1e-8,
+    "max_iter": 35,
+    "gauss_newton_iterations": 0,
+    "cg_max_iter": 500,
+    "cg_coarse_tolerance": 0.1,
+    "line_search_armijo": 0.01,
+    "line_search_max_backtracking": 200
+  },
+  "map_sensitivity": {
+    "directions": 1,
+    "perturbation_std": 0.1,
+    "cg_relative_tolerance": 1e-10,
+    "cg_max_iter": 1000,
+    "use_gauss_newton": false
+  }
+}
