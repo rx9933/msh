@@ -1,0 +1,139 @@
+{
+  "file_sample_index": 0,
+  "frequency_hz": 1000.0,
+  "global_index": 0,
+  "jacobian_axes": [
+    "observation",
+    "parameter"
+  ],
+  "jacobian_shape": [
+    256,
+    8321
+  ],
+  "map": {
+    "converged": true,
+    "final_cost": 14.933590614553616,
+    "final_gradient_norm": 0.44922362276286587,
+    "iterations": 25
+  },
+  "map_sensitivity": {
+    "axes": [
+      "direction",
+      "parameter"
+    ],
+    "cg_iterations": [
+      1001
+    ],
+    "direction_count": 1,
+    "shape": [
+      1,
+      8321
+    ]
+  },
+  "map_solver_settings": {
+    "abs_tolerance": 1e-08,
+    "cg_coarse_tolerance": 0.1,
+    "cg_max_iter": 500,
+    "gauss_newton_iterations": 0,
+    "initial_guess": "prior_mean",
+    "line_search_armijo": 0.01,
+    "line_search_max_backtracking": 200,
+    "max_iter": 35,
+    "rel_tolerance": 1e-06
+  },
+  "model_settings": {
+    "box": [
+      0.0,
+      0.0,
+      3.0,
+      3.0
+    ],
+    "box_pml": [
+      -1.0,
+      -1.0,
+      4.0,
+      4.0
+    ],
+    "correlation_length": 0.2,
+    "density": 1.204,
+    "dirichlet": true,
+    "frequency": 1000,
+    "mean_function_value": 0.0,
+    "n_sensors": 32,
+    "n_sources": 4,
+    "ndim": 2,
+    "noise_variance": 0.001,
+    "nx": 64,
+    "ny": 64,
+    "pml_amplitude": 50,
+    "pointwise_std": 1.0,
+    "prior_mean": null,
+    "sensor_radius": 1.0,
+    "sound_speed": 343.4,
+    "source_frequencies": [
+      [
+        1000
+      ],
+      [
+        1000
+      ],
+      [
+        1000
+      ],
+      [
+        1000
+      ]
+    ],
+    "source_loc": [
+      [
+        0.3,
+        3.4
+      ],
+      [
+        1.1,
+        3.4
+      ],
+      [
+        1.9,
+        3.4
+      ],
+      [
+        2.7,
+        3.4
+      ]
+    ],
+    "tv_alpha": 500,
+    "tv_beta": 10,
+    "tv_epsilon": 0.01,
+    "use_tv_regularization": false,
+    "verbose": false
+  },
+  "noise_std": 0.000956676159883815,
+  "noise_variance": 9.152292748900428e-07,
+  "observation_count": 256,
+  "outputs": {
+    "clean_data": true,
+    "data_sensitivity": true,
+    "fisher_diagonal": true,
+    "forward_jacobian": true,
+    "map_initial_parameter": true,
+    "map_point": true,
+    "map_sensitivity": true,
+    "noisy_data": true,
+    "parameter": true,
+    "prior_mean_parameter": true,
+    "state": true,
+    "velocity_field": true
+  },
+  "parameter_dofs": 8321,
+  "prior_mean_smoothing_settings": {
+    "dt": 0.01,
+    "kappa": 0.05,
+    "num_steps": 20
+  },
+  "sample_id": 0,
+  "source_file": "/storage/arushi/posa_dino/dino_tutorial/applications/multisourcehelmholtz/downloads/model/model1.npy",
+  "state_dofs": 264200,
+  "status": "complete",
+  "velocity_scale": 0.0001
+}
