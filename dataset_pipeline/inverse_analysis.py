@@ -90,6 +90,7 @@ def _newton_solver(model: Any, options: dict[str, Any]):
         else model.model
     )
     solver = hp.ReducedSpaceNewtonCG(optimization_model)
+    solver.parameters["print_level"] = 1#int(options.get("print_level", 1))
     solver.parameters["rel_tolerance"] = float(options.get("rel_tolerance", 1.0e-6))
     solver.parameters["abs_tolerance"] = float(options.get("abs_tolerance", 1.0e-8))
     solver.parameters["max_iter"] = int(options.get("max_iter", 35))

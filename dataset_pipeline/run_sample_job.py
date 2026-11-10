@@ -208,8 +208,10 @@ def _process_sample(model, sample, provenance, config, sample_id, rng: np.random
     ) and not skip_map
     if do_map:
         print(f"  Solving MAP point for sample {sample_id}", flush=True)
+        map_solver_options = dict(config.get("map_solver", {}))
+        map_solver_options.setdefault("print_level", int(settings.get("verbose", False)))
         map_point, map_manifest = solve_map_point(
-            model, parameter, config.get("map_solver", {})
+            model, parameter, map_solver_options
         )
         print(
             f"  MAP result: converged={map_manifest['converged']}, "
