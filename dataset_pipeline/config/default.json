@@ -14,8 +14,8 @@
     "kappa": 0.05
   },
   "model_settings": {
-    "nx": 32,
-    "ny": 32,
+    "nx": 64,
+    "ny": 64,
     "source_frequencies": [[1000], [1000], [1000], [1000]],
     "use_tv_regularization": false,
     "verbose": false
@@ -39,7 +39,7 @@
     "initial_guess": "prior_mean",
     "rel_tolerance": 1e-6,
     "abs_tolerance": 1e-8,
-    "max_iter": 35,
+    "max_iter": 15,
     "gauss_newton_iterations": 0,
     "cg_max_iter": 500,
     "cg_coarse_tolerance": 0.1,

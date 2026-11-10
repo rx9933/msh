@@ -173,6 +173,11 @@ def map_data_jacobian(model: Any, map_point: Any, options: dict[str, Any]):
     disable_prior_preconditioner = options.get("disable_prior_preconditioner", False)
     if not isinstance(disable_prior_preconditioner, bool):
         raise ValueError("map_sensitivity.disable_prior_preconditioner must be a boolean")
+    cg_preconditioner = (
+        _IdentityPreconditioner()
+        if disable_prior_preconditioner
+        else model.prior.Rsolver
+    )
 
     iterations = np.empty(n_observations, dtype=np.int32)
     nonconverged_observations = []
@@ -186,8 +191,7 @@ def map_data_jacobian(model: Any, map_point: Any, options: dict[str, Any]):
         sensitivity = model.model.generate_vector(hp.PARAMETER)
         cg_solver = hp.CGSolverSteihaug(cg_parameters)
         cg_solver.set_operator(hessian)
-        if not disable_prior_preconditioner:
-            cg_solver.set_preconditioner(model.prior.Rsolver)
+        cg_solver.set_preconditioner(cg_preconditioner)
         sensitivity.zero()
         cg_solver.solve(sensitivity, parameter_rhs)
         full_jacobian[:, observation_index] = sensitivity.get_local()
