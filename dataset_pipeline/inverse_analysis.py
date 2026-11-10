@@ -7,6 +7,24 @@ from typing import Any
 import numpy as np
 
 
+class _IdentityPreconditioner:
+    def solve(self, out: Any, rhs: Any) -> None:
+        out.zero()
+        out.axpy(1.0, rhs)
+
+
+class _IdentityPreconditionedModel:
+    def __init__(self, model: Any):
+        self._model = model
+        self._preconditioner = _IdentityPreconditioner()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._model, name)
+
+    def Rsolver(self) -> _IdentityPreconditioner:
+        return self._preconditioner
+
+
 def create_smooth_prior_mean(model: Any, true_parameter: Any, options: dict[str, Any]):
     """Diffuse the true parameter with the heat equation, matching main.py's prior mean."""
     import dolfin as dl
@@ -63,7 +81,15 @@ def _newton_solver(model: Any, options: dict[str, Any]):
     """Construct hIPPYlib's reduced-space Newton-CG solver from JSON options."""
     import hippylib as hp
 
-    solver = hp.ReducedSpaceNewtonCG(model.model)
+    disable_prior_preconditioner = options.get("disable_prior_preconditioner", False)
+    if not isinstance(disable_prior_preconditioner, bool):
+        raise ValueError("map_solver.disable_prior_preconditioner must be a boolean")
+    optimization_model = (
+        _IdentityPreconditionedModel(model.model)
+        if disable_prior_preconditioner
+        else model.model
+    )
+    solver = hp.ReducedSpaceNewtonCG(optimization_model)
     solver.parameters["rel_tolerance"] = float(options.get("rel_tolerance", 1.0e-6))
     solver.parameters["abs_tolerance"] = float(options.get("abs_tolerance", 1.0e-8))
     solver.parameters["max_iter"] = int(options.get("max_iter", 35))
@@ -92,6 +118,8 @@ def solve_map_point(model: Any, true_parameter: Any, options: dict[str, Any]):
 
     model.model.solveFwd(point[hp.STATE], point)
     solver = _newton_solver(model, options)
+    if options.get("disable_prior_preconditioner", False):
+        print("  MAP Newton-CG prior preconditioner disabled", flush=True)
     solver.solve(point)
 
     # Refresh state and adjoint at the returned parameter so saved data and
@@ -107,68 +135,68 @@ def solve_map_point(model: Any, true_parameter: Any, options: dict[str, Any]):
     }
 
 
-def map_data_sensitivities(
-    model: Any,
-    map_point: Any,
-    rng: np.random.Generator,
-    options: dict[str, Any],
-):
-    """Compute notebook-style $H^{-1}J^T\Gamma^{-1}\delta d$ actions at a MAP point."""
+def map_data_jacobian(model: Any, map_point: Any, options: dict[str, Any]):
+    """Compute the full derivative d(MAP parameter)/d(data) at a MAP point.
+
+    Each column matches MAPJacobian.mult in the supplied reference: apply
+    ``J.T / noise_variance`` to one data-space basis vector, then solve the
+    exact reduced-Hessian system. The prior preconditioner can be disabled
+    with ``disable_prior_preconditioner``.
+    """
     import dolfin as dl
     import hippyflow as hf
     import hippylib as hp
 
-    count = int(options.get("directions", 1))
-    perturbation_std = float(options.get("perturbation_std", 0.1))
-    if count < 1 or perturbation_std < 0:
-        raise ValueError("Sensitivity directions must be positive and perturbation_std non-negative")
-
     observable = hf.LinearStateObservable(model.model.problem, model.misfit.B)
     jacobian = hf.ObservableJacobian(observable)
-    # This initializes both PDE and observation-misfit Hessian blocks.
-    model.model.setPointForHessianEvaluations(
-        map_point, gauss_newton_approx=bool(options.get("use_gauss_newton", False))
-    )
+    # Match MAPJacobian.setLinearizationPoint(x, False) in the reference.
+    model.model.setPointForHessianEvaluations(map_point, gauss_newton_approx=False)
     hessian = hp.ReducedHessian(model.model, misfit_only=False)
-    hessian.gauss_newton_approx = bool(options.get("use_gauss_newton", False))
+    hessian.gauss_newton_approx = False
 
-    data_direction = dl.Vector()
-    model.misfit.B.init_vector(data_direction, 0)
-    weighted_direction = dl.Vector()
-    model.misfit.B.init_vector(weighted_direction, 0)
+    data_basis = dl.Vector()
+    model.misfit.B.init_vector(data_basis, 0)
     noise_variance = float(model.misfit.noise_variance)
     if not np.isfinite(noise_variance) or noise_variance <= 0:
         raise ValueError(f"Invalid observation noise variance: {noise_variance}")
 
+    n_observations = int(data_basis.size())
+    n_parameters = int(map_point[hp.PARAMETER].size())
+    full_jacobian = np.empty((n_parameters, n_observations), dtype=np.float64)
     parameter_rhs = model.model.generate_vector(hp.PARAMETER)
-    sensitivity = model.model.generate_vector(hp.PARAMETER)
     cg_parameters = hp.CGSolverSteihaug_ParameterList()
     cg_parameters["rel_tolerance"] = float(options.get("cg_relative_tolerance", 1.0e-10))
     cg_parameters["max_iter"] = int(options.get("cg_max_iter", 1000))
-    cg_solver = hp.CGSolverSteihaug(cg_parameters)
-    cg_solver.set_operator(hessian)
-    cg_solver.set_preconditioner(model.prior.Rsolver)
+    if cg_parameters["rel_tolerance"] <= 0 or cg_parameters["max_iter"] < 1:
+        raise ValueError("MAP Jacobian CG tolerance and iteration limit must be positive")
+    disable_prior_preconditioner = options.get("disable_prior_preconditioner", False)
+    if not isinstance(disable_prior_preconditioner, bool):
+        raise ValueError("map_sensitivity.disable_prior_preconditioner must be a boolean")
 
-    actions = []
-    directions = []
-    iterations = []
-    for direction_index in range(count):
-        values = rng.normal(0.0, perturbation_std, size=data_direction.size())
-        data_direction.set_local(values)
-        data_direction.apply("insert")
-        weighted_direction.zero()
-        weighted_direction.axpy(1.0 / noise_variance, data_direction)
-
+    iterations = np.empty(n_observations, dtype=np.int32)
+    nonconverged_observations = []
+    for observation_index in range(n_observations):
+        data_basis.zero()
+        data_basis[observation_index] = 1.0 / noise_variance
+        data_basis.apply("insert")
         parameter_rhs.zero()
-        jacobian.transpmult(weighted_direction, parameter_rhs)
+        jacobian.transpmult(data_basis, parameter_rhs)
+
+        sensitivity = model.model.generate_vector(hp.PARAMETER)
+        cg_solver = hp.CGSolverSteihaug(cg_parameters)
+        cg_solver.set_operator(hessian)
+        if not disable_prior_preconditioner:
+            cg_solver.set_preconditioner(model.prior.Rsolver)
         sensitivity.zero()
         cg_solver.solve(sensitivity, parameter_rhs)
-        actions.append(sensitivity.get_local().copy())
-        directions.append(data_direction.get_local().copy())
-        iterations.append(int(getattr(cg_solver, "iter", -1)))
-        print(
-            f"  MAP sensitivity {direction_index + 1}/{count}: "
-            f"CG iterations={iterations[-1]}, norm={sensitivity.norm('l2'):.4e}",
-            flush=True,
-        )
-    return np.asarray(directions), np.asarray(actions), iterations
+        full_jacobian[:, observation_index] = sensitivity.get_local()
+        iterations[observation_index] = int(getattr(cg_solver, "iter", -1))
+        if iterations[observation_index] >= cg_parameters["max_iter"]:
+            nonconverged_observations.append(observation_index)
+        if (observation_index + 1) % 8 == 0 or observation_index + 1 == n_observations:
+            print(
+                f"  MAP-data Jacobian columns {observation_index + 1}/{n_observations}; "
+                f"latest CG iterations={iterations[observation_index]}",
+                flush=True,
+            )
+    return full_jacobian, iterations.tolist(), nonconverged_observations

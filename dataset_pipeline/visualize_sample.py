@@ -276,14 +276,24 @@ def _save_finite_element_views(
             plt.close(figure)
             print(f"Saved spatial observation plots to {observation_path}")
 
-    sensitivities = load("map_data_sensitivities.npy")
+    map_data_jacobian = load("map_data_jacobian.npy")
     gradient = load("misfit_gradient_at_true.npy")
     fisher = load("fisher_information_diagonal.npy")
     spatial_parameter_arrays: list[tuple[np.ndarray, str]] = []
-    if sensitivities is not None:
+    if map_data_jacobian is not None:
+        if map_data_jacobian.ndim != 2 or map_data_jacobian.shape[0] != parameter_space.dim():
+            raise ValueError(
+                "map_data_jacobian.npy must have axes [parameter, observation] and match the parameter-space dimension"
+            )
+        # Plot a small set of observation-basis columns; the full matrix is also
+        # present in the generic all-arrays overview.
+        selected_columns = np.unique(np.linspace(
+            0, map_data_jacobian.shape[1] - 1,
+            min(6, map_data_jacobian.shape[1]), dtype=int,
+        ))
         spatial_parameter_arrays.extend(
-            (row, f"MAP sensitivity direction {index + 1}")
-            for index, row in enumerate(np.atleast_2d(sensitivities))
+            (map_data_jacobian[:, index], f"d(MAP)/d(data) — observation {index}")
+            for index in selected_columns
         )
     if gradient is not None:
         spatial_parameter_arrays.append((gradient, "Misfit gradient at true parameter"))

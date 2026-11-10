@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Generate parameter/data/Jacobian samples for one local or array job."""
 
-from __future__ import annotations
 
+from __future__ import annotations
+import os
+os.environ["OMP_NUM_THREADS"] = "1"
 import argparse
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -13,7 +14,7 @@ from typing import Any
 
 # Set thread limits before importing NumPy, DOLFIN, PETSc, or hIPPYlib.
 for _name in (
-    "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
     "BLIS_NUM_THREADS", "NUMEXPR_NUM_THREADS",
 ):
     os.environ.setdefault(_name, "1")
@@ -26,7 +27,7 @@ sys.path.insert(0, str(MSH_DIR))
 sys.path.insert(0, str(HERE))
 
 from pipeline_config import SampleIndex, discover_model_files, load_config
-from inverse_analysis import create_smooth_prior_mean, map_data_sensitivities, solve_map_point
+from inverse_analysis import create_smooth_prior_mean, map_data_jacobian, solve_map_point
 
 
 def _atomic_save(path: Path, array: np.ndarray) -> None:
@@ -43,6 +44,17 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
     temporary = path.with_name(path.name + ".tmp")
     temporary.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     os.replace(temporary, path)
+
+
+def _make_file_alias(source: Path, alias: Path) -> None:
+    """Create a same-filesystem hard-link alias, falling back to a copy."""
+    if alias.exists():
+        alias.unlink()
+    try:
+        os.link(source, alias)
+    except OSError:
+        import shutil
+        shutil.copyfile(source, alias)
 
 
 def _field_2d(sample: np.ndarray, channel: int) -> np.ndarray:
@@ -124,12 +136,20 @@ def _build_model(config):
     return model
 
 
-def _process_sample(model, sample, provenance, config, sample_id: int, rng: np.random.Generator):
+def _process_sample(model, sample, provenance, config, sample_id, rng: np.random.Generator,
+                    skip_map: bool = False):
     """Generate and persist all requested quantities for a single input model."""
     import dolfin as dl
     import hippylib as hp
 
     outputs = config.get("outputs", {})
+    make_map_data_sensitivities = (
+        outputs.get("map_data_sensitivities", False)
+        or outputs.get("map_data_jacobian", False)
+        or outputs.get("map_sensitivity", False)
+    )
+    if skip_map:
+        make_map_data_sensitivities = False
     settings = config.get("model_settings", {})
     parameter, raw_field = _parameter_from_velocity(
         model, sample, {**model.settings, "velocity_channel": config.get("velocity_channel", 0)},
@@ -167,6 +187,11 @@ def _process_sample(model, sample, provenance, config, sample_id: int, rng: np.r
     jacobian_matrix = None
     sensitivity = None
     fisher_diagonal = None
+    map_manifest = None
+    map_point = None
+    map_jacobian = None
+    map_jacobian_iterations = None
+    map_jacobian_nonconverged = None
     if outputs.get("forward_jacobian", False) or outputs.get("data_sensitivity", False) or outputs.get("fisher_diagonal", False):
         jacobian_matrix = _compute_forward_jacobian(
             pde, observation_operator, x, clean_data.size, parameter.size()
@@ -177,30 +202,27 @@ def _process_sample(model, sample, provenance, config, sample_id: int, rng: np.r
         if outputs.get("fisher_diagonal", False):
             fisher_diagonal = np.sum(jacobian_matrix.astype(np.float64) ** 2, axis=0) / noise_variance
 
-        map_manifest = None
-        map_point = None
-        map_directions = None
-        map_sensitivities = None
-        map_sensitivity_iterations = None
-        do_map = outputs.get("map_point", False) or outputs.get("map_sensitivity", False)
-        if do_map:
-            print(f"  Solving MAP point for sample {sample_id}", flush=True)
-            map_point, map_manifest = solve_map_point(
-                model, parameter, config.get("map_solver", {})
+    do_map = (
+        outputs.get("map_point", False)
+        or make_map_data_sensitivities
+    ) and not skip_map
+    if do_map:
+        print(f"  Solving MAP point for sample {sample_id}", flush=True)
+        map_point, map_manifest = solve_map_point(
+            model, parameter, config.get("map_solver", {})
+        )
+        print(
+            f"  MAP result: converged={map_manifest['converged']}, "
+            f"iterations={map_manifest['iterations']}, cost={map_manifest['final_cost']:.6e}",
+            flush=True,
+        )
+        if make_map_data_sensitivities:
+            print(f"  Computing full MAP-data Jacobian for sample {sample_id}", flush=True)
+            map_jacobian, map_jacobian_iterations, map_jacobian_nonconverged = map_data_jacobian(
+                model,
+                map_point,
+                config.get("map_sensitivity", {}),
             )
-            print(
-                f"  MAP result: converged={map_manifest['converged']}, "
-                f"iterations={map_manifest['iterations']}, cost={map_manifest['final_cost']:.6e}",
-                flush=True,
-            )
-            if outputs.get("map_sensitivity", False):
-                print(f"  Computing MAP-data sensitivities for sample {sample_id}", flush=True)
-                map_directions, map_sensitivities, map_sensitivity_iterations = map_data_sensitivities(
-                    model,
-                    map_point,
-                    rng,
-                    config.get("map_sensitivity", {}),
-                )
 
     sample_dir = Path(config["output_dir"]) / f"sample_{sample_id:07d}"
     sample_dir.mkdir(parents=True, exist_ok=True)
@@ -235,11 +257,27 @@ def _process_sample(model, sample, provenance, config, sample_id: int, rng: np.r
         _atomic_save(sample_dir / "map_parameter.npy", map_point[hp.PARAMETER].get_local())
         _atomic_save(sample_dir / "map_state.npy", map_point[hp.STATE].get_local())
         _atomic_save(sample_dir / "map_adjoint.npy", map_point[hp.ADJOINT].get_local())
-    if outputs.get("map_sensitivity", False) and map_sensitivities is not None:
-        _atomic_save(sample_dir / "map_data_perturbations.npy", map_directions)
-        _atomic_save(sample_dir / "map_data_sensitivities.npy", map_sensitivities)
+    if make_map_data_sensitivities and map_jacobian is not None:
+        expected_shape = (int(parameter.size()), int(clean_data.size))
+        if map_jacobian.shape != expected_shape:
+            raise ValueError(
+                f"MAP-data sensitivity shape {map_jacobian.shape} does not match "
+                f"the transpose layout of forward_jacobian: expected {expected_shape}"
+            )
+        if jacobian_matrix is not None and map_jacobian.shape != jacobian_matrix.T.shape:
+            raise ValueError(
+                "MAP-data sensitivity shape does not match forward_jacobian.T: "
+                f"{map_jacobian.shape} vs {jacobian_matrix.T.shape}"
+            )
+        sensitivity_path = sample_dir / "map_Data_Sensitiviites.npy"
+        _atomic_save(sensitivity_path, map_jacobian)
+        # Keep readable/correctly-spelled names and the old output name as aliases
+        # without storing additional copies on filesystems that support hard links.
+        _make_file_alias(sensitivity_path, sample_dir / "map_data_sensitivities.npy")
+        _make_file_alias(sensitivity_path, sample_dir / "map_data_jacobian.npy")
 
     manifest = {
+        "pipeline_schema_version": 2,
         "status": "complete",
         "sample_id": sample_id,
         **provenance,
@@ -256,13 +294,20 @@ def _process_sample(model, sample, provenance, config, sample_id: int, rng: np.r
         "model_settings": model.settings,
         "map_solver_settings": config.get("map_solver", {}),
         "prior_mean_smoothing_settings": config.get("prior_mean_smoothing", {}),
+        "map_skipped": bool(skip_map),
         "map": map_manifest,
         "map_sensitivity": {
-            "direction_count": len(map_sensitivity_iterations),
-            "cg_iterations": map_sensitivity_iterations,
-            "shape": list(map_sensitivities.shape) if map_sensitivities is not None else None,
-            "axes": ["direction", "parameter"] if map_sensitivities is not None else None,
-        } if map_sensitivity_iterations is not None else None,
+            "cg_iterations_by_observation": map_jacobian_iterations,
+            "nonconverged_observation_indices": map_jacobian_nonconverged,
+            "shape": list(map_jacobian.shape) if map_jacobian is not None else None,
+            "axes": ["parameter", "observation"] if map_jacobian is not None else None,
+            "filename": "map_Data_Sensitiviites.npy" if map_jacobian is not None else None,
+            "forward_jacobian_transposed_shape": [int(parameter.size()), int(clean_data.size())],
+            "prior_preconditioner_disabled": bool(
+                config.get("map_sensitivity", {}).get("disable_prior_preconditioner", False)
+            ),
+            "method": "exact_reduced_hessian_unit_data_basis",
+        } if map_jacobian_iterations is not None else None,
     }
     _atomic_json(sample_dir / "manifest.json", manifest)
     return manifest
@@ -275,11 +320,17 @@ def parse_args():
     parser.add_argument("--num-tasks", type=int, default=1, help="Total number of array tasks")
     parser.add_argument("--sample-count", type=int, help="Override configured total number of samples")
     parser.add_argument("--overwrite", action="store_true", help="Regenerate even complete samples")
+    parser.add_argument(
+        "--skip_map",
+        action="store_true",
+        help="Skip the MAP point solve and MAP-data sensitivities entirely (no computation, no output).",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    print("skip map", args.skip_map)
     config = load_config(args.config)
     if args.sample_count is not None:
         if args.sample_count < 1:
@@ -289,7 +340,7 @@ def main() -> None:
         raise ValueError("Require 0 <= --task-id < --num-tasks, with --num-tasks >= 1")
 
     files = discover_model_files(config)
-    sample_index = SampleIndex(files)
+    sample_index = SampleIndex(files) 
     requested = int(config["sample_count"])
     if requested > sample_index.total_samples:
         raise ValueError(
@@ -298,12 +349,15 @@ def main() -> None:
         )
 
     indices = list(range(args.task_id, requested, args.num_tasks))
+   
     if not indices:
         print(f"Task {args.task_id}/{args.num_tasks}: no samples assigned.", flush=True)
         return
 
     print(f"Task {args.task_id}/{args.num_tasks}: {len(indices)} sample(s), requested total={requested}", flush=True)
     print(f"Discovered {len(files)} model files / {sample_index.total_samples} fields", flush=True)
+    if args.skip_map:
+        print("MAP point and MAP-data sensitivities will be skipped.", flush=True)
     model = _build_model(config)
     seed_base = int(config.get("seed", 0))
 
@@ -312,7 +366,19 @@ def main() -> None:
         manifest_path = sample_dir / "manifest.json"
         if manifest_path.exists() and not args.overwrite:
             try:
-                if json.loads(manifest_path.read_text(encoding="utf-8")).get("status") == "complete":
+                old_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                outputs = config.get("outputs", {})
+                needs_map_sensitivities = (
+                    outputs.get("map_data_sensitivities", False)
+                    or outputs.get("map_data_jacobian", False)
+                    or outputs.get("map_sensitivity", False)
+                ) and not args.skip_map
+                expected_sensitivity_file = sample_dir / "map_data_sensitivities.npy"
+                is_complete = (
+                    old_manifest.get("status") == "complete"
+                    and (not needs_map_sensitivities or expected_sensitivity_file.is_file())
+                )
+                if is_complete:
                     print(f"Skipping complete sample {sample_id}", flush=True)
                     continue
             except (OSError, json.JSONDecodeError):
@@ -320,8 +386,15 @@ def main() -> None:
         sample, provenance = sample_index.get(sample_id)
         started = time.time()
         sample_rng = np.random.default_rng(seed_base + sample_id)
-        print(f"Generating sample {sample_id} from {provenance['source_file']}", flush=True)
-        manifest = _process_sample(model, sample, provenance, config, sample_id, sample_rng)
+        print(
+        f"Generating sample {sample_id} from "
+        f"{provenance['source_file']} "
+        f"(global_index={provenance['global_index']}, "
+        f"file_sample_index={provenance['file_sample_index']})",
+        flush=True,
+        ) 
+        manifest = _process_sample(model, sample, provenance, config, sample_id, sample_rng,
+                                   skip_map=args.skip_map)
         print(
             f"Completed sample {sample_id}: obs={manifest['observation_count']}, "
             f"params={manifest['parameter_dofs']}, elapsed={time.time() - started:.1f}s",

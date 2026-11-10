@@ -14,8 +14,8 @@
     "kappa": 0.05
   },
   "model_settings": {
-    "nx": 64,
-    "ny": 64,
+    "nx": 32,
+    "ny": 32,
     "source_frequencies": [[1000], [1000], [1000], [1000]],
     "use_tv_regularization": false,
     "verbose": false
@@ -32,7 +32,8 @@
     "data_sensitivity": true,
     "fisher_diagonal": true,
     "map_point": true,
-    "map_sensitivity": true
+    "map_data_jacobian": true,
+    "map_data_sensitivities": true
   },
   "map_solver": {
     "initial_guess": "prior_mean",
@@ -43,13 +44,11 @@
     "cg_max_iter": 500,
     "cg_coarse_tolerance": 0.1,
     "line_search_armijo": 0.01,
-    "line_search_max_backtracking": 200
+    "line_search_max_backtracking": 200,
+    "disable_prior_preconditioner": true
   },
   "map_sensitivity": {
-    "directions": 1,
-    "perturbation_std": 0.1,
-    "cg_relative_tolerance": 1e-10,
     "cg_max_iter": 1000,
-    "use_gauss_newton": false
+    "disable_prior_preconditioner": true
   }
 }
