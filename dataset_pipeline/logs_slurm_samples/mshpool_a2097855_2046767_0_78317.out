@@ -1,0 +1,22 @@
+[2026-11-01 15:53:23] Task 0/2 starting on c115-003.horizon.tacc.utexas.edu
+Processing 20 samples using python3; up to 10 samples assigned to this task.
+SKIP_MAP=FALSE (extra_args: none)
+skip map False
+Task 0/2: 10 sample(s), requested total=20
+Discovered 60 model files / 30000 fields
+Multi-frequency model with 4 (source, frequency) pairs
+  Pair 1: Source 1, Freq 1000Hz
+  Pair 2: Source 2, Freq 1000Hz
+  Pair 3: Source 3, Freq 1000Hz
+  Pair 4: Source 4, Freq 1000Hz
+Number of observation points: 32
+Base mesh: 64x64, cells=16384, vertices=8321
+Function spaces: state=264200 (4 sources x 2 components), parameter=8321, adjoint=264200
+  Using Gaussian regularization (BiLaplacian)
+  Frequency 1000Hz: wave number=1.519683e+01, state=264200, parameter=8321, observations=256
+Created 1 frequency models from 4 (source, frequency) pairs
+Generating sample 0 from /scratch/09579/a2097855/downloads/model/model1.npy
+  Jacobian adjoints: 64/256
+  Jacobian adjoints: 128/256
+  Jacobian adjoints: 192/256
+  Solving MAP point for sample 0
